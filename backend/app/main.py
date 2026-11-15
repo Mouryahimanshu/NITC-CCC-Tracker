@@ -33,17 +33,26 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-app.include_router(auth.router, prefix=settings.api_prefix)
-app.include_router(rooms.router, prefix=settings.api_prefix)
-app.include_router(bookings.router, prefix=settings.api_prefix)
+for prefix in [settings.api_prefix, "/v1"]:
+    app.include_router(auth.router, prefix=prefix)
+    app.include_router(rooms.router, prefix=prefix)
+    app.include_router(bookings.router, prefix=prefix)
+
+
+@app.get("/", tags=["meta"])
+@app.get("/api", tags=["meta"])
+def root_check() -> dict[str, str]:
+    return {"status": "ok", "name": settings.app_name, "version": "0.1.0"}
 
 
 @app.get("/health", tags=["health"])
+@app.get("/api/health", tags=["health"])
 def health_check() -> dict[str, str]:
     """Return process liveness without exposing configuration or secrets."""
     return {"status": "ok"}
 
 
 @app.get(f"{settings.api_prefix}/", tags=["meta"])
+@app.get("/v1/", tags=["meta"])
 def api_root() -> dict[str, str]:
     return {"name": settings.app_name, "version": "0.1.0"}
