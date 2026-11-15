@@ -139,8 +139,8 @@ def create_user(payload: dict, admin: User = Depends(require_roles(UserRole.ADMI
     role = str(payload.get("role", ""))
     if len(username) < 3 or len(username) > 80 or len(password) < 12 or not display_name:
         raise HTTPException(422, "Provide username, display name, and password (at least 12 characters)")
-    if role not in {"STUDENT", "FACULTY", "ADMIN"}:
-        raise HTTPException(422, "Invalid role")
+    if role not in {"FACULTY", "ADMIN"}:
+        raise HTTPException(422, "Invalid role. Only FACULTY and ADMIN accounts can be created (students do not require an account).")
     user = User(username=username, display_name=display_name, password_hash=hash_password(password),
                 role=role, active=True)
     db.add(user)

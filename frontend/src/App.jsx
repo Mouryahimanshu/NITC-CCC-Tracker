@@ -7,11 +7,57 @@ function dateLabel(value, options = { weekday: 'short', day: 'numeric', month: '
   return new Intl.DateTimeFormat('en-IN', { ...options, timeZone: 'Asia/Kolkata' }).format(new Date(`${value}T12:00:00+05:30`))
 }
 
-function AvailabilityPage({ schedule, days, startDate, setStartDate, rangeDays, setRangeDays, shiftRange, goToday, loading, availabilityState }) {
+function AvailabilityPage({ schedule, days, startDate, setStartDate, rangeDays, setRangeDays, shiftRange, goToday, loading, availabilityState, syncStatus }) {
   const byRoomDate = new Map(schedule.map((entry) => [`${entry.room_code}-${entry.date}`, entry]))
   const rangeEnd = days[days.length - 1]
   return <div className="space-y-6">
-    <section className="rounded-2xl bg-slate-900 px-6 py-7 text-white sm:px-8"><div className="flex flex-wrap items-end justify-between gap-5"><div><p className="text-sm font-medium text-teal-300">Central Computer Centre</p><h2 className="mt-2 text-3xl font-semibold tracking-tight">Terminal room schedule</h2><p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">Browse multiple weeks. Bars show confirmed bookings and maintenance on a half-hour timeline in IST.</p></div><div className="flex flex-wrap items-end gap-3"><label className="text-sm text-slate-300">Range<select className="ml-2 rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-white" value={rangeDays} onChange={(e) => setRangeDays(Number(e.target.value))}><option value={7}>1 week</option><option value={14}>2 weeks</option><option value={28}>4 weeks</option></select></label><label className="text-sm text-slate-300">Starting date<input className="ml-2 rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-white" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></label></div></div><div className="mt-5 flex flex-wrap items-center gap-2"><button className="rounded-md border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800" onClick={() => shiftRange(-1)}>← Previous</button><button className="rounded-md border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800" onClick={goToday}>Today</button><button className="rounded-md border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800" onClick={() => shiftRange(1)}>Next →</button><span className="ml-1 text-sm text-slate-300">{dateLabel(startDate, { day: 'numeric', month: 'short', year: 'numeric' })} – {dateLabel(rangeEnd, { day: 'numeric', month: 'short', year: 'numeric' })}</span></div></section>
+    <section className="rounded-2xl bg-slate-900 px-6 py-7 text-white sm:px-8">
+      <div className="flex flex-wrap items-end justify-between gap-5">
+        <div>
+          <p className="text-sm font-medium text-teal-300">Central Computer Centre</p>
+          <h2 className="mt-2 text-3xl font-semibold tracking-tight">Terminal room schedule</h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">Browse multiple weeks. Bars show confirmed bookings and maintenance on a half-hour timeline in IST.</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-sm text-slate-300">Range<select className="ml-2 rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-white" value={rangeDays} onChange={(e) => setRangeDays(Number(e.target.value))}><option value={7}>1 week</option><option value={14}>2 weeks</option><option value={28}>4 weeks</option></select></label>
+          <label className="text-sm text-slate-300">Starting date<input className="ml-2 rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-white" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></label>
+        </div>
+      </div>
+      <div className="mt-5 flex flex-wrap items-center gap-2">
+        <button className="rounded-md border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800" onClick={() => shiftRange(-1)}>← Previous</button>
+        <button className="rounded-md border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800" onClick={goToday}>Today</button>
+        <button className="rounded-md border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800" onClick={() => shiftRange(1)}>Next →</button>
+        <span className="ml-1 text-sm text-slate-300">{dateLabel(startDate, { day: 'numeric', month: 'short', year: 'numeric' })} – {dateLabel(rangeEnd, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3 text-xs text-slate-400">
+        <span>
+          Last mailbox synchronization:{' '}
+          <strong className="text-slate-200">
+            {syncStatus?.last_sync_time ? `${new Date(syncStatus.last_sync_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' })} IST` : 'No sync recorded'}
+          </strong>
+        </span>
+        {syncStatus?.is_stale ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2.5 py-0.5 text-xs font-medium text-amber-300 ring-1 ring-inset ring-amber-500/40">
+            ⚠️ Mailbox sync older than 15 min
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/20 px-2.5 py-0.5 text-xs font-medium text-teal-300">
+            ✓ Mailbox synchronized
+          </span>
+        )}
+      </div>
+    </section>
+    {syncStatus?.is_stale && (
+      <div role="alert" className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900 shadow-sm">
+        <span className="text-xl" aria-hidden="true">⚠️</span>
+        <div>
+          <h3 className="text-sm font-semibold">Stale Data Warning (NFR-08)</h3>
+          <p className="mt-0.5 text-xs text-amber-800">
+            Mailbox synchronization has not succeeded within the last 15 minutes. Displayed availability may not reflect recent email reservation requests.
+          </p>
+        </div>
+      </div>
+    )}
     {availabilityState !== 'ready' && <div role="status" className={`rounded-lg px-4 py-3 text-sm ${availabilityState === 'error' ? 'bg-amber-50 text-amber-900' : 'bg-slate-100 text-slate-700'}`}>{availabilityState === 'error' ? 'Availability could not be confirmed. Refresh after reconnecting to the database.' : 'Loading confirmed bookings…'}</div>}
     {days.map((day) => {
       const dayEntries = roomCodes.map((room) => ({ room, ...(byRoomDate.get(`${room}-${day}`) || { bookings: [], maintenance: [] }) }))
@@ -67,10 +113,6 @@ function LoginDrawer({ role, onClose, onLogin }) {
   </>
 }
 
-function StudentPage() {
-  return <section className="rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-semibold">Student access</h2><p className="mt-2 text-sm leading-6 text-slate-600">The schedule above shows confirmed bookings and room maintenance. Student accounts are view-only.</p></section>
-}
-
 export default function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem('ccc-token') || '')
   const [user, setUser] = useState(null)
@@ -81,12 +123,31 @@ export default function App() {
   const [startDate, setStartDate] = useState(todayIST)
   const [rangeDays, setRangeDays] = useState(14)
   const [schedule, setSchedule] = useState([])
+  const [syncStatus, setSyncStatus] = useState(null)
   const [availabilityLoading, setAvailabilityLoading] = useState(false)
   const [availabilityState, setAvailabilityState] = useState('loading')
   const [availabilityVersion, setAvailabilityVersion] = useState(0)
   const [adminVersion, setAdminVersion] = useState(0)
   const days = useMemo(() => Array.from({ length: rangeDays }, (_, index) => { const date = new Date(`${startDate}T12:00:00+05:30`); date.setDate(date.getDate() + index); return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date) }), [startDate, rangeDays])
-  const loadAvailability = useCallback(async () => { setAvailabilityLoading(true); setAvailabilityState('loading'); try { setSchedule(await request(`/rooms/availability?from=${startDate}&days=${rangeDays}`)); setAvailabilityState('ready'); setError('') } catch (loadError) { setAvailabilityState('error'); setError(loadError.message) } finally { setAvailabilityLoading(false) } }, [startDate, rangeDays])
+  const loadAvailability = useCallback(async () => {
+    setAvailabilityLoading(true)
+    setAvailabilityState('loading')
+    try {
+      const [scheduleData, syncData] = await Promise.all([
+        request(`/rooms/availability?from=${startDate}&days=${rangeDays}`),
+        request('/rooms/sync-status').catch(() => null),
+      ])
+      setSchedule(scheduleData)
+      if (syncData) setSyncStatus(syncData)
+      setAvailabilityState('ready')
+      setError('')
+    } catch (loadError) {
+      setAvailabilityState('error')
+      setError(loadError.message)
+    } finally {
+      setAvailabilityLoading(false)
+    }
+  }, [startDate, rangeDays])
   const refreshAvailability = useCallback(() => setAvailabilityVersion((version) => version + 1), [])
   const refreshAdmin = useCallback(() => setAdminVersion((version) => version + 1), [])
   const onError = useCallback((message) => { setError(message); setNotice('') }, [])
@@ -113,9 +174,9 @@ export default function App() {
   function shiftRange(direction) { const nextDate = new Date(`${startDate}T12:00:00+05:30`); nextDate.setDate(nextDate.getDate() + direction * rangeDays); setStartDate(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(nextDate)) }
   const validPage = page === 'availability' || user?.role === 'ADMIN' && page === 'admin' || user?.role === 'FACULTY' && page === 'faculty'
 
-  return <main className="min-h-screen bg-slate-50 text-slate-900"><header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-4 lg:px-8"><button className="text-left" onClick={() => navigate('availability')}><p className="text-xs font-semibold uppercase tracking-[.17em] text-teal-700">National Institute of Technology Calicut</p><h1 className="mt-1 text-xl font-semibold">CCC Terminal Booking Tracker</h1></button><nav className="flex items-center gap-2">{user ? <><button className="button-secondary" onClick={() => navigate('availability')}>Schedule</button>{user.role !== 'STUDENT' && <button className="button-secondary" onClick={() => navigate(user.role.toLowerCase())}>Dashboard</button>}<span className="ml-2 hidden text-sm text-slate-600 sm:inline">{user.display_name} · {user.role}</span><button className="button-secondary" onClick={logout}>Sign out</button></> : <div className="group relative"><button className="button-primary px-5 py-2.5" aria-haspopup="true">Login <span aria-hidden="true">⌄</span></button><div className="invisible absolute right-0 top-full z-40 mt-2 w-52 translate-y-1 rounded-xl border border-slate-200 bg-white p-2 opacity-0 shadow-xl transition group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100"><button className="w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-teal-50" onClick={() => setDrawerRole('FACULTY')}>Faculty login</button><button className="w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-teal-50" onClick={() => setDrawerRole('ADMIN')}>Admin login</button></div></div>}</nav></div></header>
+  return <main className="min-h-screen bg-slate-50 text-slate-900"><header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur"><div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-4 lg:px-8"><button className="text-left" onClick={() => navigate('availability')}><p className="text-xs font-semibold uppercase tracking-[.17em] text-teal-700">National Institute of Technology Calicut</p><h1 className="mt-1 text-xl font-semibold">CCC Terminal Booking Tracker</h1></button><nav className="flex items-center gap-2">{user ? <><button className="button-secondary" onClick={() => navigate('availability')}>Schedule</button><button className="button-secondary" onClick={() => navigate(user.role.toLowerCase())}>Dashboard</button><span className="ml-2 hidden text-sm text-slate-600 sm:inline">{user.display_name} · {user.role}</span><button className="button-secondary" onClick={logout}>Sign out</button></> : <div className="group relative"><button className="button-primary px-5 py-2.5" aria-haspopup="true">Login <span aria-hidden="true">⌄</span></button><div className="invisible absolute right-0 top-full z-40 mt-2 w-52 translate-y-1 rounded-xl border border-slate-200 bg-white p-2 opacity-0 shadow-xl transition group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100"><button className="w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-teal-50" onClick={() => setDrawerRole('FACULTY')}>Faculty login</button><button className="w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-teal-50" onClick={() => setDrawerRole('ADMIN')}>Admin login</button></div></div>}</nav></div></header>
     <div className="mx-auto max-w-7xl space-y-7 px-5 py-8 lg:px-8">{(error || notice) && <div role={error ? 'alert' : 'status'} className={`rounded-lg px-4 py-3 text-sm ${error ? 'bg-rose-50 text-rose-800' : 'bg-teal-50 text-teal-900'}`}>{error || notice}<button className="float-right font-semibold" onClick={() => { setError(''); setNotice('') }}>×</button></div>}
-      {validPage && page === 'availability' && <AvailabilityPage schedule={schedule} days={days} startDate={startDate} setStartDate={setStartDate} rangeDays={rangeDays} setRangeDays={setRangeDays} shiftRange={shiftRange} goToday={() => setStartDate(todayIST())} loading={availabilityLoading} availabilityState={availabilityState} />}
+      {validPage && page === 'availability' && <AvailabilityPage schedule={schedule} days={days} startDate={startDate} setStartDate={setStartDate} rangeDays={rangeDays} setRangeDays={setRangeDays} shiftRange={shiftRange} goToday={() => setStartDate(todayIST())} loading={availabilityLoading} availabilityState={availabilityState} syncStatus={syncStatus} />}
       {user?.role === 'FACULTY' && page === 'faculty' && <FacultyDashboard token={token} onError={onError} onNotice={onNotice} refreshAvailability={refreshAvailability} />}
       {user?.role === 'ADMIN' && page === 'admin' && <AdminDashboard token={token} schedule={schedule} onError={onError} onNotice={onNotice} refreshAdmin={adminVersion} refreshAvailability={refreshAvailability} />}
       {!validPage && user && <div className="rounded-xl border border-slate-200 bg-white p-6"><h2 className="text-lg font-semibold">Dashboard page unavailable</h2><button className="button-primary mt-4" onClick={() => navigate(user.role === 'ADMIN' ? 'admin' : user.role === 'FACULTY' ? 'faculty' : 'availability')}>Open my dashboard</button></div>}
