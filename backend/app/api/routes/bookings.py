@@ -155,6 +155,115 @@ def create_user(payload: dict, admin: User = Depends(require_roles(UserRole.ADMI
     return {"id": str(user.id), "username": username, "display_name": display_name, "role": role}
 
 
+@router.get("/admin/needs-review")
+def needs_review_queue(_: User = Depends(require_roles(UserRole.ADMIN)), db: Session = Depends(get_session)):
+    """Return the Needs Review queue showing source reference, timestamp, fields, and reason (REQ-17)."""
+    rows = db.scalars(select(EmailLog).where(EmailLog.status == "NEEDS_REVIEW")
+                      .order_by(EmailLog.received_at.desc()).limit(100)).all()
+    return [{"id": str(row.id), "sender": row.sender, "subject": row.subject,
+        "message_id": row.message_id,
+        "received_at": row.received_at.isoformat() if row.received_at else None,
+        "status": row.status, "reason": row.error_detail or "Requires review",
+        "parsed": {"room_code": row.parsed_room,
+                   "booking_date": row.parsed_date.isoformat() if row.parsed_date else None,
+                   "start_time": row.parsed_start, "end_time": row.parsed_end,
+                   "purpose": row.parsed_purpose}} for row in rows]
+
+
+@router.patch("/admin/needs-review/{log_id}")
+def correct_needs_review(log_id: int, payload: dict, admin: User = Depends(require_roles(UserRole.ADMIN)),
+                         db: Session = Depends(get_session)):
+    """Correct extracted fields for a Needs Review email record with audit logging (REQ-18)."""
+    log = db.get(EmailLog, log_id)
+    if log is None:
+        raise HTTPException(404, "Email record not found")
+    if log.status != "NEEDS_REVIEW":
+        raise HTTPException(409, "Only records in Needs Review status can be corrected")
+    before = {
+        "room_code": log.parsed_room,
+        "booking_date": log.parsed_date.isoformat() if log.parsed_date else None,
+        "start_time": log.parsed_start,
+        "end_time": log.parsed_end,
+        "purpose": log.parsed_purpose,
+    }
+    if "room_code" in payload:
+        log.parsed_room = str(payload["room_code"]).strip().upper()
+    if "booking_date" in payload and payload["booking_date"]:
+        log.parsed_date = date.fromisoformat(str(payload["booking_date"]).strip())
+    if "start_time" in payload:
+        log.parsed_start = str(payload["start_time"]).strip()
+    if "end_time" in payload:
+        log.parsed_end = str(payload["end_time"]).strip()
+    if "purpose" in payload:
+        log.parsed_purpose = str(payload["purpose"]).strip()[:500]
+
+    after = {
+        "room_code": log.parsed_room,
+        "booking_date": log.parsed_date.isoformat() if log.parsed_date else None,
+        "start_time": log.parsed_start,
+        "end_time": log.parsed_end,
+        "purpose": log.parsed_purpose,
+    }
+    db.add(AuditLog(actor_user_id=admin.id, action="EMAIL_RECORD_CORRECTED", entity_type="email_record",
+                    entity_id=str(log.id), details=json.dumps({"before": before, "after": after})))
+    db.commit()
+    return {"id": str(log.id), "status": log.status, "parsed": after}
+
+
+@router.post("/admin/needs-review/{log_id}/confirm")
+def confirm_needs_review(log_id: int, admin: User = Depends(require_roles(UserRole.ADMIN)),
+                         db: Session = Depends(get_session)):
+    """Confirm a valid, non-conflicting Needs Review record into a Confirmed booking (REQ-19)."""
+    from app.services.booking import _claim_booking
+    log = db.get(EmailLog, log_id)
+    if log is None:
+        raise HTTPException(404, "Email record not found")
+    if log.status != "NEEDS_REVIEW":
+        raise HTTPException(409, "Only records in Needs Review status can be confirmed")
+    if not all([log.parsed_room, log.parsed_date, log.parsed_start, log.parsed_end]):
+        raise HTTPException(422, "All fields (room, date, start time, end time) must be present before confirming")
+
+    booking_input = BookingInput(
+        room_code=log.parsed_room,
+        booking_date=log.parsed_date,
+        start_time=log.parsed_start,
+        end_time=log.parsed_end,
+        purpose=log.parsed_purpose or "Confirmed from CCC email review",
+    )
+    booking = _claim_booking(db, booking_input, str(admin.id), "EMAIL", str(log.id))
+    log.status = "PROCESSED"
+    log.booking_id = booking.id
+    log.processed_at = datetime.now(timezone.utc)
+    log.error_code = None
+    log.error_detail = None
+    db.add(AuditLog(actor_user_id=admin.id, action="EMAIL_RECORD_CONFIRMED", entity_type="email_record",
+                    entity_id=str(log.id), details=json.dumps({"booking_id": booking.id})))
+    db.commit()
+    return {"id": str(log.id), "status": "PROCESSED", "booking_id": str(booking.id)}
+
+
+@router.post("/admin/needs-review/{log_id}/dismiss")
+def dismiss_needs_review(log_id: int, payload: dict | None = None,
+                         admin: User = Depends(require_roles(UserRole.ADMIN)),
+                         db: Session = Depends(get_session)):
+    """Dismiss an unusable or invalid Needs Review record with mandatory reason (REQ-19)."""
+    log = db.get(EmailLog, log_id)
+    if log is None:
+        raise HTTPException(404, "Email record not found")
+    if log.status != "NEEDS_REVIEW":
+        raise HTTPException(409, "Only records in Needs Review status can be dismissed")
+    reason = str((payload or {}).get("reason", "")).strip()
+    if len(reason) < 3:
+        raise HTTPException(422, "A dismissal reason of at least 3 characters is required")
+
+    log.status = "DISMISSED"
+    log.error_detail = reason[:500]
+    db.add(AuditLog(actor_user_id=admin.id, action="EMAIL_RECORD_DISMISSED", entity_type="email_record",
+                    entity_id=str(log.id), details=json.dumps({"reason": reason})))
+    db.commit()
+    return {"id": str(log.id), "status": "DISMISSED", "reason": reason}
+
+
 @router.get("/admin/email-logs")
 def email_logs(status: str | None = None, _: User = Depends(require_roles(UserRole.ADMIN)),
                db: Session = Depends(get_session)):
