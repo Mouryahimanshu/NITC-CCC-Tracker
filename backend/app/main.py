@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, urlencode
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.core.config import get_settings
 from app.db.postgres import dispose_database, initialize_database
@@ -29,13 +29,31 @@ app = FastAPI(
     redirect_slashes=False,
 )
 
+# Allow all Vercel deployments and local development hosts with full credentials
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.frontend_origin.split(",") if origin.strip()],
+    allow_origin_regex=r"^https://.*\.vercel\.app$|^http://localhost(:\d+)?$",
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Ensure CORS headers are always present even on 500 errors to prevent browser fetch blocks."""
+    origin = request.headers.get("origin") or "*"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "type": type(exc).__name__},
+        headers={
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
 
 
 @app.middleware("http")

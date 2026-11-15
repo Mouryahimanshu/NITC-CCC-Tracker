@@ -1,14 +1,24 @@
-const API = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+const defaultApi = typeof window !== 'undefined' && window.location.hostname.endsWith('vercel.app')
+  ? 'https://nitc-ccc-tracker.vercel.app/api/v1'
+  : '/api/v1'
+
+const API = (import.meta.env.VITE_API_BASE_URL || defaultApi).replace(/\/$/, '')
 
 export async function request(path, { token, ...options } = {}) {
-  const response = await fetch(`${API}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  })
+  const url = `${API}${path}`
+  let response
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options?.headers,
+      },
+    })
+  } catch (err) {
+    throw new Error(`Could not reach backend API (${err.message}). Check network connection.`)
+  }
   const data = response.status === 204 ? null : await response.json().catch(() => null)
   if (!response.ok) throw new Error(data?.detail || `Request failed (${response.status})`)
   return data
