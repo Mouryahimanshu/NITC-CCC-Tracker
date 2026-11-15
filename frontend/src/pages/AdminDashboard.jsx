@@ -113,10 +113,16 @@ function BookingManager({ token, onError, onNotice, refreshAdmin, refreshAvailab
     } catch (error) { onError(error.message) }
   }
   async function remove(booking) {
-    if (!window.confirm(`Delete ${booking.room} on ${booking.date}, ${ampm(booking.start)}–${ampm(booking.end)}? The slot will become available and an audit record will be kept.`)) return
+    const reason = window.prompt(`Provide cancellation reason for ${booking.room} on ${booking.date}, ${ampm(booking.start)}–${ampm(booking.end)}:`, 'Administrative schedule cancellation')
+    if (reason === null) return
     try {
-      await request(`/admin/bookings/${booking.id}`, { token, method: 'DELETE' })
-      onNotice('Booking deleted from the active schedule.'); setForm(null); await load(); refreshAvailability()
+      await request(`/admin/bookings/${booking.id}`, {
+        token,
+        method: 'DELETE',
+        body: JSON.stringify({ reason: reason.trim() || 'Administrative cancellation' }),
+      })
+      onNotice('Booking cancelled, slot released, and audit log recorded.')
+      setForm(null); await load(); refreshAvailability()
     } catch (error) { onError(error.message) }
   }
   return <Panel title="Bookings by date"><div className="grid gap-6 xl:grid-cols-[340px_1fr]">
@@ -132,6 +138,194 @@ function BookingManager({ token, onError, onNotice, refreshAdmin, refreshAvailab
       <div className="space-y-2">{dayBookings.length ? dayBookings.map((booking)=><article key={booking.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-4"><div><p className="font-semibold">{booking.room} <span className="font-normal text-slate-600">· {ampm(booking.start)}–{ampm(booking.end)}</span></p><p className="mt-1 text-xs text-slate-500">Confirmed booking</p></div><div className="flex gap-2"><button className="button-secondary" onClick={()=>openEditor(booking)}>Edit time</button><button className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50" onClick={()=>remove(booking)}>Delete</button></div></article>) : <p className="rounded-lg bg-slate-50 p-5 text-sm text-slate-500">No confirmed bookings for this date.</p>}</div>
     </div>
   </div></Panel>
+}
+
+function NeedsReviewManager({ token, onError, onNotice, refreshAdmin, refreshAvailability }) {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [editingItem, setEditingItem] = useState(null)
+  const [editForm, setEditForm] = useState({ room_code: 'T1', booking_date: '', start_time: '08:00', end_time: '09:00', purpose: '' })
+  const [dismissingId, setDismissingId] = useState(null)
+  const [dismissReason, setDismissReason] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await request('/admin/needs-review', { token })
+      setItems(data)
+    } catch (error) {
+      onError(error.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [token, onError])
+
+  useEffect(() => { load() }, [load, refreshAdmin])
+
+  const startTimes = Array.from({ length: 24 }, (_, index) => minutesToTime(480 + index * 30))
+  const endTimes = Array.from({ length: 24 }, (_, index) => minutesToTime(510 + index * 30))
+
+  function openEdit(item) {
+    setEditingItem(item)
+    setEditForm({
+      room_code: item.parsed?.room_code || 'T1',
+      booking_date: item.parsed?.booking_date || todayIST(),
+      start_time: item.parsed?.start_time || '08:00',
+      end_time: item.parsed?.end_time || '09:00',
+      purpose: item.parsed?.purpose || item.subject || 'Reservation from email',
+    })
+  }
+
+  async function saveEdit(event) {
+    event.preventDefault()
+    try {
+      await request(`/admin/needs-review/${editingItem.id}`, {
+        token,
+        method: 'PATCH',
+        body: JSON.stringify(editForm),
+      })
+      onNotice('Email reservation fields corrected and logged in audit trail.')
+      setEditingItem(null)
+      await load()
+    } catch (error) {
+      onError(error.message)
+    }
+  }
+
+  async function confirmBooking(item) {
+    try {
+      await request(`/admin/needs-review/${item.id}/confirm`, {
+        token,
+        method: 'POST',
+      })
+      onNotice('Email reservation confirmed into a booking and added to schedule.')
+      await load()
+      refreshAvailability()
+    } catch (error) {
+      onError(error.message)
+    }
+  }
+
+  async function dismiss(id) {
+    if (!dismissReason.trim() || dismissReason.trim().length < 3) {
+      onError('A dismissal reason of at least 3 characters is required.')
+      return
+    }
+    try {
+      await request(`/admin/needs-review/${id}/dismiss`, {
+        token,
+        method: 'POST',
+        body: JSON.stringify({ reason: dismissReason.trim() }),
+      })
+      onNotice('Email reservation dismissed.')
+      setDismissingId(null)
+      setDismissReason('')
+      await load()
+    } catch (error) {
+      onError(error.message)
+    }
+  }
+
+  return (
+    <Panel title="Needs Review Queue (REQ-4, REQ-17)" action={<button className="button-secondary" onClick={load}>Refresh</button>}>
+      <p className="mb-4 text-xs text-slate-500">
+        Emails requiring administrative intervention due to unparsed fields, syntax ambiguity, or room schedule conflicts. You can correct fields, confirm them into valid bookings, or dismiss unusable records.
+      </p>
+
+      {editingItem && (
+        <form onSubmit={saveEdit} className="mb-6 rounded-xl border border-teal-200 bg-teal-50 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h4 className="font-semibold text-teal-950">Correct reservation details (REQ-18)</h4>
+            <button type="button" className="text-sm text-slate-600 underline" onClick={() => setEditingItem(null)}>Cancel</button>
+          </div>
+          <p className="mb-3 text-xs text-slate-600">
+            Source: <strong>{editingItem.sender}</strong> · Subject: &quot;{editingItem.subject}&quot;
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="field-label">Room
+              <select className="input" value={editForm.room_code} onChange={(e) => setEditForm({ ...editForm, room_code: e.target.value })}>
+                {roomCodes.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </label>
+            <label className="field-label">Date
+              <input className="input" type="date" value={editForm.booking_date} onChange={(e) => setEditForm({ ...editForm, booking_date: e.target.value })} required />
+            </label>
+            <label className="field-label">Start time (IST)
+              <select className="input" value={editForm.start_time} onChange={(e) => setEditForm({ ...editForm, start_time: e.target.value })}>
+                {startTimes.map((t) => <option key={t} value={t}>{ampm(t)}</option>)}
+              </select>
+            </label>
+            <label className="field-label">End time (IST)
+              <select className="input" value={editForm.end_time} onChange={(e) => setEditForm({ ...editForm, end_time: e.target.value })}>
+                {endTimes.filter((t) => timeToMinutes(t) > timeToMinutes(editForm.start_time)).map((t) => <option key={t} value={t}>{ampm(t)}</option>)}
+              </select>
+            </label>
+            <label className="field-label sm:col-span-2">Purpose
+              <input className="input" maxLength={500} value={editForm.purpose} onChange={(e) => setEditForm({ ...editForm, purpose: e.target.value })} required />
+            </label>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button className="button-primary">Save corrections</button>
+            <button type="button" className="button-secondary" onClick={() => setEditingItem(null)}>Cancel</button>
+          </div>
+        </form>
+      )}
+
+      {loading ? (
+        <p className="py-6 text-center text-sm text-slate-500">Loading Needs Review queue…</p>
+      ) : !items.length ? (
+        <div className="rounded-lg bg-slate-50 p-6 text-center text-sm text-slate-500">
+          ✓ No emails currently require review. All incoming reservation messages are fully processed.
+        </div>
+      ) : (
+        <div className="divide-y">
+          {items.map((item) => (
+            <article key={item.id} className="py-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-slate-900">{item.subject || '(No subject)'}</span>
+                    <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">NEEDS REVIEW</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    From: {item.sender} {item.received_at ? `· ${new Date(item.received_at).toLocaleString()}` : ''}
+                  </p>
+                  <div className="mt-2 text-xs">
+                    <span className="font-medium text-rose-700">Issue: {item.reason}</span>
+                  </div>
+                  <div className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-700">
+                    Extracted values: <strong>{item.parsed?.room_code || 'Room missing'}</strong> · <strong>{item.parsed?.booking_date || 'Date missing'}</strong> · <strong>{item.parsed?.start_time ? ampm(item.parsed.start_time) : '?'}–{item.parsed?.end_time ? ampm(item.parsed.end_time) : '?'}</strong> · <em>{item.parsed?.purpose || 'No purpose'}</em>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button className="button-secondary" onClick={() => openEdit(item)}>Edit fields</button>
+                  <button className="button-primary" onClick={() => confirmBooking(item)}>Confirm booking</button>
+                  <button className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50" onClick={() => { setDismissingId(dismissingId === item.id ? null : item.id); setDismissReason('') }}>
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+              {dismissingId === item.id && (
+                <form className="mt-3 rounded-lg bg-rose-50 p-3" onSubmit={(e) => { e.preventDefault(); dismiss(item.id) }}>
+                  <label className="field-label">Reason for dismissal (REQ-19)
+                    <textarea className="input min-h-16" minLength={3} maxLength={500} value={dismissReason} onChange={(e) => setDismissReason(e.target.value)} placeholder="Explain why this reservation is dismissed (e.g., Spam, Unresolvable conflicting slot, Incomprehensible details)" required />
+                  </label>
+                  <div className="mt-2 flex gap-2">
+                    <button className="rounded-lg bg-rose-700 px-3 py-2 text-sm font-semibold text-white" disabled={dismissReason.trim().length < 3}>
+                      Confirm dismissal
+                    </button>
+                    <button type="button" className="button-secondary" onClick={() => setDismissingId(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </Panel>
+  )
 }
 
 export default function AdminDashboard({ token, schedule, onError, onNotice, refreshAdmin, refreshAvailability }) {
@@ -161,9 +355,10 @@ export default function AdminDashboard({ token, schedule, onError, onNotice, ref
     <section aria-label="Admin actions" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{ACTIONS.map(([id,title,description])=><button key={id} onClick={()=>setActive(active===id?'':id)} aria-expanded={active===id} className={`rounded-xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-300 hover:shadow ${active===id?'border-teal-600 bg-teal-50 ring-1 ring-teal-600':'border-slate-200 bg-white'}`}><span className="flex items-center justify-between font-semibold">{title}<span aria-hidden="true" className="text-teal-700">{active===id?'−':'+'}</span></span><span className="mt-1 block text-sm text-slate-500">{description}</span></button>)}</section>
     {activeAction && <div className="space-y-5"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-wide text-teal-700">Admin action</p><h3 className="text-xl font-semibold">{activeAction[1]}</h3></div><button className="button-secondary" onClick={()=>setActive('')}>Close panel</button></div>
       {active==='bookings' && <BookingManager token={token} onError={onError} onNotice={onNotice} refreshAdmin={refreshAdmin} refreshAvailability={refreshAvailability} />}
-      {active==='accounts' && <CreateUser token={token} onError={onError} onNotice={onNotice} />}
-      {active==='maintenance' && <MaintenanceManager token={token} onError={onError} onNotice={onNotice} refreshAvailability={refreshAvailability} />}
       {active==='requests' && <Panel title="Pending faculty requests" action={<button className="button-secondary" onClick={loadActivity}>Refresh</button>}><div className="divide-y">{pending.length ? pending.map((item)=><article key={item.id} className="py-4"><div className="flex flex-wrap items-center justify-between gap-4"><div className="text-sm"><b>{item.room_code}</b> · {item.booking_date} · {ampm(item.start_time)}–{ampm(item.end_time)}<p className="mt-1 text-slate-600">{item.purpose}</p></div><div className="flex gap-2"><button className="button-primary" onClick={()=>decide(item.id,'approve')}>Approve</button><button className="button-secondary" onClick={()=>{setRejectingId(rejectingId===item.id?null:item.id);setRejectionReason('')}}>Reject</button></div></div>{rejectingId===item.id&&<form className="mt-3 rounded-lg bg-rose-50 p-3" onSubmit={(event)=>{event.preventDefault();decide(item.id,'reject',rejectionReason)}}><label className="field-label">Reason for rejection<textarea className="input min-h-20" minLength={3} maxLength={500} value={rejectionReason} onChange={(event)=>setRejectionReason(event.target.value)} placeholder="Explain why this request cannot be approved" required /></label><div className="mt-2 flex gap-2"><button className="rounded-lg bg-rose-700 px-3 py-2 text-sm font-semibold text-white" disabled={rejectionReason.trim().length<3}>Reject with reason</button><button type="button" className="button-secondary" onClick={()=>setRejectingId(null)}>Cancel</button></div></form>}</article>) : <p className="py-5 text-sm text-slate-500">No pending requests.</p>}</div></Panel>}
+      {active==='needs_review' && <NeedsReviewManager token={token} onError={onError} onNotice={onNotice} refreshAdmin={refreshAdmin} refreshAvailability={refreshAvailability} />}
+      {active==='maintenance' && <MaintenanceManager token={token} onError={onError} onNotice={onNotice} refreshAvailability={refreshAvailability} />}
+      {active==='accounts' && <CreateUser token={token} onError={onError} onNotice={onNotice} />}
       {active==='activity' && <div className="grid gap-5 xl:grid-cols-2"><Panel title="Email processing"><div className="space-y-3">{emailLogs.length?emailLogs.map((email)=><article key={email.id} className="rounded-lg bg-slate-50 p-3 text-sm"><div className="flex justify-between gap-3"><b className="truncate">{email.subject||'(no subject)'}</b><span className="badge">{email.status}</span></div><p className="mt-1 truncate text-xs text-slate-500">{email.sender} {email.received_at?`· ${new Date(email.received_at).toLocaleString()}`:''}</p>{email.parsed&&<p className="mt-2 text-xs text-slate-700">{email.parsed.room_code||'Room unknown'} · {email.parsed.booking_date||'Date unknown'} · {email.parsed.start_time||'?'}–{email.parsed.end_time||'?'} IST</p>}{email.error&&<p className="mt-2 text-xs text-rose-700">{email.error}</p>}</article>):<p className="text-sm text-slate-500">No messages processed yet.</p>}</div></Panel><Panel title="Recent audit events"><div className="space-y-2">{auditLogs.slice(0,50).map((item)=><div key={item.id} className="flex justify-between gap-3 border-b py-2 text-xs"><span>{item.action} · {item.entity_type}</span><time className="shrink-0 text-slate-500">{new Date(item.created_at).toLocaleString()}</time></div>)}{!auditLogs.length&&<p className="text-sm text-slate-500">No events recorded.</p>}</div></Panel></div>}
     </div>}
   </div>
